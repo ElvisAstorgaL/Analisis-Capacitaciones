@@ -7,14 +7,15 @@ from extra import excel_bytes, pdf_bytes, month_heatmap, save_history
 
 st.title('Planificación general de cursos')
 st.caption('Fechas sugeridas según coincidencias reales de turno día. La cantidad de supervisores no equivale a participantes disponibles.')
-upload = st.file_uploader('Cargar calendario de turnos (.xlsx)', type='xlsx')
-if upload is None:
-    st.info('Carga tu calendario para comenzar. El archivo se procesa durante esta sesión.')
+calendar_bytes = st.session_state.get('csar_calendar_bytes')
+if not calendar_bytes:
+    st.info('Carga el calendario de turnos desde la barra lateral para comenzar. Se conservará al cambiar de módulo.')
     st.stop()
+st.caption('📂 Calendario activo: ' + st.session_state.get('csar_calendar_bytes_name', 'Excel cargado'))
 months = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 month = st.selectbox('Mes', list(range(1,13)), index=9, format_func=lambda n: months[n-1])
 try:
-    records, warnings = read_calendar(io.BytesIO(upload.getvalue()), month)
+    records, warnings = read_calendar(io.BytesIO(calendar_bytes), month)
 except Exception as exc:
     st.error(f'No se pudo leer el archivo: {exc}')
     st.stop()
@@ -80,14 +81,18 @@ if selected_days:
            'Agradeceré confirmar si tienen técnicos con esta capacitación pendiente y cuántos podrían asistir en cada fecha. '
            'La disponibilidad indicada corresponde únicamente al turno programado y debe confirmarse antes de inscribir.\n\nSaludos.')
     st.subheader('Correo listo para adaptar')
-    if st.button('Guardar esta programación en historial',key='save_general'):
+    if st.button('Actualizar programación en historial',key='save_general'):
+        history=st.session_state.setdefault('csar_history',[])
+        previous=st.session_state.get('general_history_index_v9')
+        if previous is not None and 0 <= previous < len(history):
+            history.pop(previous)
+        st.session_state['general_history_index_v9']=len(history)
         save_history({'Módulo':'Cursos','Fecha':', '.join(x.strftime('%d/%m/%Y') for x in selected),'Capacitación':curso,'Supervisor solicitante':supervisor,'Candidatos por turno':len(contact_rows),'Estado':'Propuesta, pendiente de confirmación'})
-        st.success('Guardada en el historial temporal.')
+        st.success('Programación actualizada en el historial temporal.')
     st.download_button('Exportar supervisores y fechas (Excel)',excel_bytes({'Supervisores':contact_rows}),file_name='planificacion_cursos.xlsx')
     st.download_button('Exportar propuesta (PDF)',pdf_bytes('Planificación: '+curso,{'Supervisores coincidentes':contact_rows}),file_name='planificacion_cursos.pdf')
-    st.text_area('Copia este texto a Outlook o Teams',value=email,height=350,disabled=True)
-    st.caption('Vista previa regenerada según las fechas seleccionadas. Copia el texto o descarga el borrador.')
-    st.download_button('Descargar borrador de correo (.txt)',email.encode('utf-8'),file_name='consulta_capacitacion.txt',mime='text/plain')
+    st.caption('Correo actualizado según tu selección. Pulsa el icono de copiar en la esquina superior derecha del recuadro para copiarlo directamente a Outlook, sin descargar archivos.')
+    st.code(email,language=None,wrap_lines=True)
 else:
     st.info('Selecciona al menos una fecha para generar el listado y el correo.')
 

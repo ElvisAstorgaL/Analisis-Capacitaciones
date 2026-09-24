@@ -10,12 +10,15 @@ from extra import excel_bytes, pdf_bytes, save_history
 
 st.header('Herramientas críticas')
 st.caption('Selecciona una o varias HC. Se cruzan los pendientes de cada curso con los turnos de día de los supervisores; la asistencia individual debe confirmarse.')
-a, b = st.columns(2)
-cal = a.file_uploader('Calendario de turnos 2026', type=['xlsx'], key='hc_calendar')
-hc = b.file_uploader('Registro de capacitaciones HC', type=['xlsx'], key='hc_registry')
-if not cal or not hc:
-    st.info('Carga ambos Excel para realizar el cruce. Esta versión no almacena los archivos permanentemente.')
+calendar_bytes = st.session_state.get('csar_calendar_bytes')
+hc_bytes = st.session_state.get('csar_hc_bytes')
+if not calendar_bytes or not hc_bytes:
+    missing = []
+    if not calendar_bytes: missing.append('calendario de turnos')
+    if not hc_bytes: missing.append('registro de HC')
+    st.info('Carga desde la barra lateral: ' + ' y '.join(missing) + '. Los archivos permanecerán disponibles al cambiar de módulo.')
     st.stop()
+st.caption('📂 Calendario: ' + st.session_state.get('csar_calendar_bytes_name', 'Excel cargado') + ' · HC: ' + st.session_state.get('csar_hc_bytes_name', 'Excel cargado'))
 
 @st.cache_data(show_spinner=False)
 def load_hc(raw):
@@ -26,27 +29,33 @@ def load_calendar(raw, month, year):
     return read_calendar(io.BytesIO(raw), month, year)
 
 try:
-    courses, technicians = load_hc(hc.getvalue())
+    courses, technicians = load_hc(hc_bytes)
 except Exception as e:
     st.error(f'No se pudo leer el registro HC: {e}')
     st.stop()
 
 selected_date = st.date_input('Fecha propuesta', value=date(2026, 10, 2), min_value=date(2026, 1, 1), max_value=date(2026, 12, 31), key='hc_date')
 try:
-    records, warnings = load_calendar(cal.getvalue(), selected_date.month, selected_date.year)
+    records, warnings = load_calendar(calendar_bytes, selected_date.month, selected_date.year)
 except Exception as e:
     st.error(f'No se pudo leer el calendario: {e}')
     st.stop()
 
 st.subheader('¿Qué HC conviene programar en las fechas elegidas?')
 st.caption('Compara todas las herramientas críticas antes de programar. Pendientes totales: personas marcadas PENDIENTE. Candidatos: pendientes cuyo supervisor está de día; falta confirmar el turno individual.')
-compare_days = st.multiselect(
-    'Fechas para comparar (hasta cuatro)',
-    options=[selected_date + timedelta(days=i) for i in range(0, 15) if (selected_date + timedelta(days=i)).year == 2026],
-    default=[selected_date],
-    format_func=lambda d:d.strftime('%a %d/%m/%Y'),
-    key='hc_compare_days', max_selections=4,
-)
+st.caption('Selecciona entre 1 y 4 fechas independientes. Puedes comparar días consecutivos o fechas separadas del año.')
+number_days = st.radio('Cantidad de fechas para comparar', [1, 2, 3, 4], index=3, horizontal=True, key='hc_compare_count_v9')
+compare_days = []
+cols = st.columns(number_days)
+for i in range(number_days):
+    with cols[i]:
+        day = st.date_input(f'Fecha {i+1}', value=selected_date + timedelta(days=i),
+                            min_value=date(2026, 1, 1), max_value=date(2026, 12, 31),
+                            key=f'hc_compare_day_v9_{i}')
+        compare_days.append(day)
+if len(set(compare_days)) != len(compare_days):
+    st.warning('Hay fechas repetidas: cada día se comparará una sola vez.')
+compare_days = sorted(set(compare_days))
 # Analizar todas las HC, sin exigir elegir una capacitación previamente.
 # Los supervisores sin correspondencia permanecen visibles y no se cuentan como candidatos.
 calendar_names = sorted({r['supervisor'] for r in records})
@@ -68,18 +77,33 @@ if compare_days:
     for key, label in courses.items():
         entry = {'HC':label, 'Pendientes totales':sum(t['estados'].get(key)=='PENDIENTE' for t in technicians)}
         for day in sorted(compare_days):
-            day_records = records if (day.year,day.month)==(selected_date.year,selected_date.month) else load_calendar(cal.getvalue(),day.month,day.year)[0]
+            day_records = records if (day.year,day.month)==(selected_date.year,selected_date.month) else load_calendar(calendar_bytes,day.month,day.year)[0]
             candidates = cross_hc(day_records, technicians, key, day, mapping)
             entry[day.strftime('%d/%m')] = sum(r['Situación'].startswith('Candidato') for r in candidates)
         comparison.append(entry)
     comparison.sort(key=lambda row:(-max(row[d.strftime('%d/%m')] for d in compare_days),-row['Pendientes totales'],row['HC']))
     comparison_df=pd.DataFrame(comparison)
-    st.dataframe(comparison_df,hide_index=True,width='stretch')
+    day_cols = [day.strftime('%d/%m') for day in compare_days]
+    maxima = {col: max(int(comparison_df[col].max()), 0) for col in day_cols}
+    def heat_color(value, col):
+        maximum = maxima[col]
+        if maximum == 0 or int(value) == 0:
+            return 'background-color:#414950;color:#FFFFFF;font-weight:700'
+        fraction = int(value) / maximum
+        if fraction >= .75:
+            return 'background-color:#267D49;color:#FFFFFF;font-weight:700'
+        if fraction >= .4:
+            return 'background-color:#FFCD11;color:#181818;font-weight:700'
+        return 'background-color:#B6443F;color:#FFFFFF;font-weight:700'
+    styled = comparison_df.style
+    for col in day_cols:
+        styled = styled.map(lambda value, col=col: heat_color(value,col),subset=[col])
+    st.dataframe(styled, hide_index=True, width='stretch', height=min(680, 95+len(comparison_df)*36))
+    st.caption('🟢 Verde: mayor disponibilidad relativa del día · 🟡 Amarillo: intermedia · 🔴 Rojo: baja · Gris: sin candidatos. Cada columna se compara contra la HC con más candidatos de ese día; no representa riesgo ni urgencia de vencimiento.')
     if len(compare_days)==1:
-        day_col=compare_days[0].strftime('%d/%m')
-        st.bar_chart(comparison_df.set_index('HC')[[day_col]],horizontal=True,color='#FFCD11')
+        st.bar_chart(comparison_df.set_index('HC')[[day_cols[0]]],horizontal=True,color='#FFCD11')
     else:
-        st.caption('La tabla compara candidatos por HC y día. Una persona pendiente en dos HC puede aparecer en ambas filas; no equivale a participantes únicos.')
+        st.caption('Una persona pendiente en dos HC puede aparecer en ambas filas; no equivale a participantes únicos.')
     st.download_button('Descargar comparación de HC (Excel)',excel_bytes({'Comparación HC':comparison}),file_name='comparacion_hc.xlsx',key='hc_compare_export')
 else:
     st.info('Selecciona al menos una fecha para comparar las HC.')
@@ -108,7 +132,7 @@ for i, course in enumerate(selected_courses):
     course_day=st.date_input('Fecha de esta HC',value=selected_date,min_value=date(2026,1,1),max_value=date(2026,12,31),key=f'hc_day_{course}')
     course_dates[course]=course_day
     if course_day.month!=selected_date.month or course_day.year!=selected_date.year:
-        course_records,_=load_calendar(cal.getvalue(),course_day.month,course_day.year)
+        course_records,_=load_calendar(calendar_bytes,course_day.month,course_day.year)
     else:course_records=records
     rows = cross_hc(course_records, technicians, course, course_day, mapping)
     for r in rows:
@@ -176,13 +200,25 @@ email = (f'Asunto: {subject}\n\nEstimados/as:\n\n'
          + '\n\nLos participantes se proponen según sus HC pendientes y el turno de día registrado de sus supervisores. '
          'Favor confirmar disponibilidad individual, vigencia de los registros y asistencia. '
          'Esta propuesta no constituye una inscripción confirmada.\n\nSaludos,\nElvis Astorga')
-if st.button('Guardar programación HC en historial'):
+if st.button('Actualizar programación HC en historial'):
+    # Actualizar la última propuesta HC guardada en esta sesión, sin duplicar registros.
+    history = st.session_state.setdefault('csar_history', [])
+    prior = st.session_state.get('hc_history_indices_v9', [])
+    for idx in sorted(prior, reverse=True):
+        if 0 <= idx < len(history):
+            history.pop(idx)
+    new_indices = []
     for p in proposals:
+        new_indices.append(len(history))
         save_history({'Módulo':'HC','Fecha':p['date'].strftime('%d/%m/%Y'),'Capacitación':p['name'],'Supervisor solicitante':'Planificación general','Candidatos por turno':len(p['people']),'Estado':'Propuesta, pendiente de confirmación'})
-    st.success('Programación guardada en historial temporal.')
-st.text_area('Borrador actualizado (todas las HC seleccionadas)',value=email,height=380,disabled=True)
-st.caption('Este correo se regenera al modificar fechas, horarios o participantes. Descárgalo para copiarlo a Outlook.')
-st.download_button('Descargar correo conjunto (.txt)', email.encode('utf-8'), file_name=f'invitacion_hc_{selected_date:%Y%m%d}.txt', mime='text/plain', disabled=not all(p['valid'] for p in proposals))
+    st.session_state['hc_history_indices_v9'] = new_indices
+    st.success('Programación actualizada en el historial temporal.')
+st.caption('El texto de abajo refleja las HC, fechas, horarios y participantes seleccionados actualmente. Usa el icono de copiar en la esquina superior derecha del recuadro: copia todo el correo directamente al portapapeles, sin descargar archivos.')
+if all(p['valid'] for p in proposals):
+    st.code(email, language=None, wrap_lines=True)
+else:
+    st.warning('Corrige los horarios inválidos antes de copiar el correo.')
+    st.code(email, language=None, wrap_lines=True)
 with st.expander('Advertencias y trazabilidad'):
     if warnings:
         st.write(warnings)

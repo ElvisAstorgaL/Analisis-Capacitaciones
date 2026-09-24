@@ -26,14 +26,42 @@ p,span,label,small,li,[data-testid="stMarkdownContainer"], [data-testid="stWidge
 [data-testid="stRadio"] label,[data-testid="stCheckbox"] label {color:#F5F5F5!important}
 </style>""",unsafe_allow_html=True)
 st.markdown('### 🟡 CSAR  /  GESTIÓN DE CAPACITACIONES')
-st.caption('Planificación de cursos y herramientas críticas · versión 8 · datos cargados manualmente')
+st.caption('Planificación de cursos y herramientas críticas · versión 10 · carga manual compartida entre módulos')
 # Procesar navegación antes de crear el widget; nunca modificar su estado después.
 if '_csar_next_module' in st.session_state:
     st.session_state['csar_module'] = st.session_state.pop('_csar_next_module')
 module=st.sidebar.radio('Módulo',['🏠 Inicio','📅 Planificación de cursos','🔧 Herramientas críticas','📚 Historial e indicadores','☁️ SharePoint'],key='csar_module')
+# Los controles de carga viven en app.py y se dibujan en TODOS los módulos.
+# Se conserva una copia de bytes en session_state, independiente del widget.
+st.sidebar.divider()
+st.sidebar.markdown('### 📂 Archivos de trabajo')
+st.sidebar.caption('Cárgalos una vez. Permanecen al cambiar de módulo durante esta sesión.')
+for _kind, _label, _state_key, _widget_key in [
+    ('cal', 'Calendario de turnos (.xlsx)', 'csar_calendar_bytes', 'csar_calendar_upload_v10'),
+    ('hc', 'Registro de herramientas críticas (.xlsx)', 'csar_hc_bytes', 'csar_hc_upload_v10'),
+]:
+    _file = st.sidebar.file_uploader(_label, type=['xlsx'], key=_widget_key)
+    if _file is not None:
+        _new_bytes = _file.getvalue()
+        # La asignación es idempotente; al sustituir un archivo cambia su contenido.
+        if st.session_state.get(_state_key) != _new_bytes:
+            st.session_state[_state_key] = _new_bytes
+            st.session_state[_state_key + '_name'] = _file.name
+    if st.session_state.get(_state_key):
+        st.sidebar.success('Disponible: ' + st.session_state.get(_state_key + '_name', 'Excel cargado'))
+        if st.sidebar.button('Quitar ' + ('calendario' if _kind == 'cal' else 'registro HC'), key='csar_remove_' + _kind):
+            st.session_state.pop(_state_key, None)
+            st.session_state.pop(_state_key + '_name', None)
+            st.session_state[_widget_key] = None
+            st.rerun()
+    else:
+        st.sidebar.caption('Pendiente de carga')
+st.sidebar.caption('Al cerrar o reiniciar la sesión, vuelve a cargar los Excel. Si cambian en SharePoint, sustituye aquí el archivo correspondiente.')
+st.sidebar.divider()
+
 if module=='🏠 Inicio':
     st.title('Centro de planificación')
-    st.write('Selecciona un módulo desde el menú lateral. Los archivos se cargan en cada módulo; los registros personales no se guardan en GitHub.')
+    st.write('Carga los Excel una vez en la barra lateral y navega libremente entre módulos. Los archivos permanecen disponibles durante esta sesión; no se guardan en GitHub.')
     c1,c2=st.columns(2)
     with c1:
         with st.container(border=True):
@@ -66,6 +94,6 @@ elif module=='📚 Historial e indicadores':
     st.caption('Los indicadores reflejan únicamente el historial cargado en esta sesión, no la ejecución real ni toda la dotación.')
 else:
     st.title('Conexión con SharePoint')
-    st.warning('Aún no está conectada. La V6 utiliza carga manual; no se almacenan credenciales ni archivos de personal en el repositorio.')
+    st.warning('Aún no está conectada. La V9 utiliza carga manual; no se almacenan credenciales ni archivos de personal en el repositorio.')
     st.write('Para la conexión real se requiere autorización de TI, permisos de Microsoft Entra/Graph y una ubicación de SharePoint autorizada. La configuración debe guardarse en los secretos de Streamlit, nunca en GitHub.')
     st.write('Hasta entonces, exporta los Excel autorizados desde SharePoint y súbelos en el módulo correspondiente.')
