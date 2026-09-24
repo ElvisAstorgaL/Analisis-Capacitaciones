@@ -94,4 +94,3 @@ def coincidences(records,reference='Luis Cortes'):
         active=sorted([r for r in records if r['fecha']==day and r['estado']=='Día' and r['supervisor'].casefold()!=reference.casefold()],key=lambda x:(x['area'],x['supervisor']))
         result.append({'fecha':day,'coincidentes':active,'supervisores':len(active),'areas':len({r['area'] for r in active})})
     return result
-
