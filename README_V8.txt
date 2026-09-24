@@ -1,0 +1,1 @@
+CSAR V8: incluye ambos módulos y corrección runpy; panel comparativo HC por fechas y correo regenerado. Carga manual; SharePoint no conectado. No subir Excel con datos personales al repositorio público.

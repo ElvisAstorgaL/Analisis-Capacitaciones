@@ -1,12 +1,12 @@
 """Interfaz de planificación de una o varias herramientas críticas."""
 import io
 from collections import defaultdict
-from datetime import date, time
+from datetime import date, time, timedelta
 import pandas as pd
 import streamlit as st
 from motor import read_calendar
 from hc_motor import read_hc, cross_hc, norm
-from extra import excel_bytes, pdf_bytes, month_heatmap, save_history
+from extra import excel_bytes, pdf_bytes, save_history
 
 st.header('Herramientas críticas')
 st.caption('Selecciona una o varias HC. Se cruzan los pendientes de cada curso con los turnos de día de los supervisores; la asistencia individual debe confirmarse.')
@@ -38,13 +38,54 @@ except Exception as e:
     st.error(f'No se pudo leer el calendario: {e}')
     st.stop()
 
-st.subheader('Calendario visual de supervisores de día')
-month_counts={}
-for record in records:
-    if record['estado']=='Día':
-        month_counts.setdefault(record['fecha'],set()).add((record['supervisor'],record['area']))
-month_heatmap(selected_date.year,selected_date.month,{d:len(v) for d,v in month_counts.items()})
-st.subheader('Selecciona las herramientas críticas')
+st.subheader('¿Qué HC conviene programar en las fechas elegidas?')
+st.caption('Compara todas las herramientas críticas antes de programar. Pendientes totales: personas marcadas PENDIENTE. Candidatos: pendientes cuyo supervisor está de día; falta confirmar el turno individual.')
+compare_days = st.multiselect(
+    'Fechas para comparar (hasta cuatro)',
+    options=[selected_date + timedelta(days=i) for i in range(0, 15) if (selected_date + timedelta(days=i)).year == 2026],
+    default=[selected_date],
+    format_func=lambda d:d.strftime('%a %d/%m/%Y'),
+    key='hc_compare_days', max_selections=4,
+)
+# Analizar todas las HC, sin exigir elegir una capacitación previamente.
+# Los supervisores sin correspondencia permanecen visibles y no se cuentan como candidatos.
+calendar_names = sorted({r['supervisor'] for r in records})
+calendar_index = {norm(n) for n in calendar_names}
+hc_names = sorted({norm(t['supervisor']) for t in technicians if t['supervisor']})
+mapping = {}
+missing_names = [n for n in hc_names if n not in calendar_index and ' Y ' not in n
+                 and n not in ('SUP NUEVO', 'ALDO SANCHEZ', 'CLAUDIO ESTRADA', 'HUGO ESCOBAR')]
+if missing_names:
+    with st.expander('Correspondencias de supervisores por revisar'):
+        st.caption('SUP NUEVO en Reconstrucción corresponde a Patricio Ponce. Los jefes de operaciones no sustituyen el turno de sus supervisores participantes.')
+        for name in missing_names:
+            choice = st.selectbox(f'{name} → calendario', ['Sin correspondencia confirmada'] + calendar_names, key='hc_map_'+name)
+            if choice != 'Sin correspondencia confirmada':
+                mapping[name] = choice
+
+if compare_days:
+    comparison = []
+    for key, label in courses.items():
+        entry = {'HC':label, 'Pendientes totales':sum(t['estados'].get(key)=='PENDIENTE' for t in technicians)}
+        for day in sorted(compare_days):
+            day_records = records if (day.year,day.month)==(selected_date.year,selected_date.month) else load_calendar(cal.getvalue(),day.month,day.year)[0]
+            candidates = cross_hc(day_records, technicians, key, day, mapping)
+            entry[day.strftime('%d/%m')] = sum(r['Situación'].startswith('Candidato') for r in candidates)
+        comparison.append(entry)
+    comparison.sort(key=lambda row:(-max(row[d.strftime('%d/%m')] for d in compare_days),-row['Pendientes totales'],row['HC']))
+    comparison_df=pd.DataFrame(comparison)
+    st.dataframe(comparison_df,hide_index=True,width='stretch')
+    if len(compare_days)==1:
+        day_col=compare_days[0].strftime('%d/%m')
+        st.bar_chart(comparison_df.set_index('HC')[[day_col]],horizontal=True,color='#FFCD11')
+    else:
+        st.caption('La tabla compara candidatos por HC y día. Una persona pendiente en dos HC puede aparecer en ambas filas; no equivale a participantes únicos.')
+    st.download_button('Descargar comparación de HC (Excel)',excel_bytes({'Comparación HC':comparison}),file_name='comparacion_hc.xlsx',key='hc_compare_export')
+else:
+    st.info('Selecciona al menos una fecha para comparar las HC.')
+
+st.divider()
+st.subheader('Selecciona las herramientas críticas que programarás')
 initial = next((key for key, name in courses.items() if 'HYTORC' in norm(name)), next(iter(courses), None))
 selected_courses = st.multiselect(
     'Puedes agregar varios cursos o quitarlos con la X',
@@ -53,26 +94,8 @@ selected_courses = st.multiselect(
     placeholder='Selecciona una o más HC',
 )
 if not selected_courses:
-    st.info('Selecciona al menos una herramienta crítica para ver los candidatos.')
+    st.info('Selecciona al menos una HC para crear la programación; el análisis comparativo permanece disponible arriba.')
     st.stop()
-
-# Los nombres del calendario y HC pueden contener varias personas en una celda.
-# Se ofrecen correspondencias manuales solo para los nombres no reconocidos.
-calendar_names = sorted({r['supervisor'] for r in records})
-calendar_index = {norm(n) for n in calendar_names}
-hc_names = sorted({norm(t['supervisor']) for t in technicians
-                   if any(t['estados'].get(c) == 'PENDIENTE' for c in selected_courses)
-                   and t['supervisor']})
-mapping = {}
-missing_names = [n for n in hc_names if n not in calendar_index and ' Y ' not in n
-                 and n not in ('SUP NUEVO', 'ALDO SANCHEZ', 'CLAUDIO ESTRADA', 'HUGO ESCOBAR')]
-if missing_names:
-    with st.expander('Correspondencias de supervisores por revisar'):
-        st.caption('SUP NUEVO en Reconstrucción se interpreta como Patricio Ponce. Los jefes de operaciones no se consideran turnos de sus supervisores participantes.')
-        for name in missing_names:
-            choice = st.selectbox(f'{name} → calendario', ['Sin correspondencia confirmada'] + calendar_names, key='hc_map_'+name)
-            if choice != 'Sin correspondencia confirmada':
-                mapping[name] = choice
 
 st.divider()
 st.subheader('Resultados por capacitación')
@@ -157,7 +180,8 @@ if st.button('Guardar programación HC en historial'):
     for p in proposals:
         save_history({'Módulo':'HC','Fecha':p['date'].strftime('%d/%m/%Y'),'Capacitación':p['name'],'Supervisor solicitante':'Planificación general','Candidatos por turno':len(p['people']),'Estado':'Propuesta, pendiente de confirmación'})
     st.success('Programación guardada en historial temporal.')
-st.text_area('Borrador (incluye todas las HC seleccionadas)', value=email, height=380, key='hc_email_preview')
+st.text_area('Borrador actualizado (todas las HC seleccionadas)',value=email,height=380,disabled=True)
+st.caption('Este correo se regenera al modificar fechas, horarios o participantes. Descárgalo para copiarlo a Outlook.')
 st.download_button('Descargar correo conjunto (.txt)', email.encode('utf-8'), file_name=f'invitacion_hc_{selected_date:%Y%m%d}.txt', mime='text/plain', disabled=not all(p['valid'] for p in proposals))
 with st.expander('Advertencias y trazabilidad'):
     if warnings:

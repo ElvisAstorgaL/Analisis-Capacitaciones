@@ -85,7 +85,8 @@ if selected_days:
         st.success('Guardada en el historial temporal.')
     st.download_button('Exportar supervisores y fechas (Excel)',excel_bytes({'Supervisores':contact_rows}),file_name='planificacion_cursos.xlsx')
     st.download_button('Exportar propuesta (PDF)',pdf_bytes('Planificación: '+curso,{'Supervisores coincidentes':contact_rows}),file_name='planificacion_cursos.pdf')
-    st.text_area('Copia este texto a Outlook o Teams',email,height=350)
+    st.text_area('Copia este texto a Outlook o Teams',value=email,height=350,disabled=True)
+    st.caption('Vista previa regenerada según las fechas seleccionadas. Copia el texto o descarga el borrador.')
     st.download_button('Descargar borrador de correo (.txt)',email.encode('utf-8'),file_name='consulta_capacitacion.txt',mime='text/plain')
 else:
     st.info('Selecciona al menos una fecha para generar el listado y el correo.')

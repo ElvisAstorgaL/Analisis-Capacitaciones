@@ -26,7 +26,7 @@ p,span,label,small,li,[data-testid="stMarkdownContainer"], [data-testid="stWidge
 [data-testid="stRadio"] label,[data-testid="stCheckbox"] label {color:#F5F5F5!important}
 </style>""",unsafe_allow_html=True)
 st.markdown('### 🟡 CSAR  /  GESTIÓN DE CAPACITACIONES')
-st.caption('Planificación de cursos y herramientas críticas · versión 6 · datos cargados manualmente')
+st.caption('Planificación de cursos y herramientas críticas · versión 8 · datos cargados manualmente')
 # Procesar navegación antes de crear el widget; nunca modificar su estado después.
 if '_csar_next_module' in st.session_state:
     st.session_state['csar_module'] = st.session_state.pop('_csar_next_module')
@@ -49,13 +49,12 @@ if module=='🏠 Inicio':
             if st.button('Abrir HC',key='home_hc',use_container_width=True):
                 st.session_state['_csar_next_module']='🔧 Herramientas críticas'
                 st.rerun()
-elif module == '📅 Planificación de cursos':
+elif module=='📅 Planificación de cursos':
     import runpy
-    runpy.run_module('cursos', run_name='_main_')
-
-elif module == '🔧 Herramientas críticas':
+    runpy.run_module('cursos',run_name='__main__')
+elif module=='🔧 Herramientas críticas':
     import runpy
-    runpy.run_module('hc', run_name='_main_')
+    runpy.run_module('hc',run_name='__main__')
 elif module=='📚 Historial e indicadores':
     from extra import history_panel
     history_panel()
