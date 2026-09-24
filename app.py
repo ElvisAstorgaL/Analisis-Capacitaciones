@@ -49,8 +49,13 @@ if module=='🏠 Inicio':
             if st.button('Abrir HC',key='home_hc',use_container_width=True):
                 st.session_state['_csar_next_module']='🔧 Herramientas críticas'
                 st.rerun()
-elif module=='📅 Planificación de cursos':import cursos
-elif module=='🔧 Herramientas críticas':import hc
+elif module == '📅 Planificación de cursos':
+    import runpy
+    runpy.run_module('cursos', run_name='_main_')
+
+elif module == '🔧 Herramientas críticas':
+    import runpy
+    runpy.run_module('hc', run_name='_main_')
 elif module=='📚 Historial e indicadores':
     from extra import history_panel
     history_panel()
