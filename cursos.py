@@ -3,8 +3,9 @@ from collections import defaultdict
 import pandas as pd
 import streamlit as st
 from motor import read_calendar, coincidences
+from extra import excel_bytes, pdf_bytes, month_heatmap, save_history
 
-st.title('Planificador de capacitaciones CSAR')
+st.title('Planificación general de cursos')
 st.caption('Fechas sugeridas según coincidencias reales de turno día. La cantidad de supervisores no equivale a participantes disponibles.')
 upload = st.file_uploader('Cargar calendario de turnos (.xlsx)', type='xlsx')
 if upload is None:
@@ -37,10 +38,12 @@ m2.metric('Supervisores distintos que coinciden',len(all_contacts))
 m3.metric('Participantes adicionales requeridos',remaining)
 
 # Ranking is an opportunity indicator, never a probability or confirmation.
-ranked = sorted(days, key=lambda d:(-d['areas'],-d['supervisores'],d['fecha']))
+ranked = sorted(days, key=lambda d:(-d['supervisores'],-d['areas'],d['fecha']))
 top = ranked[:4]
+st.subheader('Calendario visual de coincidencias')
+month_heatmap(2026,month,{d['fecha']:d['supervisores'] for d in days})
 st.subheader('Fechas para consultar primero')
-st.caption('Ordenadas por número de áreas y supervisores que coinciden de día; ante empates se muestra primero la fecha más próxima dentro del mes. No indica probabilidad real de conseguir cupos.')
+st.caption('Ordenadas por número de supervisores y, en empate, áreas que coinciden de día; ante empates se muestra primero la fecha más próxima dentro del mes. No indica probabilidad real de conseguir cupos.')
 for idx,d in enumerate(top,1):
     with st.container(border=True):
         left,right=st.columns([1,3])
@@ -77,6 +80,11 @@ if selected_days:
            'Agradeceré confirmar si tienen técnicos con esta capacitación pendiente y cuántos podrían asistir en cada fecha. '
            'La disponibilidad indicada corresponde únicamente al turno programado y debe confirmarse antes de inscribir.\n\nSaludos.')
     st.subheader('Correo listo para adaptar')
+    if st.button('Guardar esta programación en historial',key='save_general'):
+        save_history({'Módulo':'Cursos','Fecha':', '.join(x.strftime('%d/%m/%Y') for x in selected),'Capacitación':curso,'Supervisor solicitante':supervisor,'Candidatos por turno':len(contact_rows),'Estado':'Propuesta, pendiente de confirmación'})
+        st.success('Guardada en el historial temporal.')
+    st.download_button('Exportar supervisores y fechas (Excel)',excel_bytes({'Supervisores':contact_rows}),file_name='planificacion_cursos.xlsx')
+    st.download_button('Exportar propuesta (PDF)',pdf_bytes('Planificación: '+curso,{'Supervisores coincidentes':contact_rows}),file_name='planificacion_cursos.pdf')
     st.text_area('Copia este texto a Outlook o Teams',email,height=350)
     st.download_button('Descargar borrador de correo (.txt)',email.encode('utf-8'),file_name='consulta_capacitacion.txt',mime='text/plain')
 else:
