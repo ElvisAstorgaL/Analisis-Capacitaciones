@@ -124,58 +124,74 @@ if not selected_courses:
 st.divider()
 st.subheader('Resultados por capacitación')
 # La fecha de cada HC es editable; para cruzar otros meses se requiere recargar su calendario.
-course_dates={}
 all_rows = []
 proposals = []
 for i, course in enumerate(selected_courses):
     label = courses[course]
-    course_day=st.date_input('Fecha de esta HC',value=selected_date,min_value=date(2026,1,1),max_value=date(2026,12,31),key=f'hc_day_{course}')
-    course_dates[course]=course_day
-    if course_day.month!=selected_date.month or course_day.year!=selected_date.year:
-        course_records,_=load_calendar(calendar_bytes,course_day.month,course_day.year)
-    else:course_records=records
-    rows = cross_hc(course_records, technicians, course, course_day, mapping)
-    for r in rows:
-        all_rows.append({'Capacitación': label, **r})
-    candidates = [r for r in rows if r['Situación'].startswith('Candidato')]
-    unmatched = [r for r in rows if r['Situación'] == 'Sin correspondencia en calendario']
     with st.container(border=True):
         st.markdown(f'#### {i+1}. {label}')
-        m1, m2, m3 = st.columns(3)
-        m1.metric('Pendientes', len(rows))
-        m2.metric('Candidatos por turno', len(candidates))
-        m3.metric('Sin correspondencia', len(unmatched))
-        if candidates:
-            st.dataframe(pd.DataFrame(candidates).drop(columns=['Fila HC']), hide_index=True, use_container_width=True)
-        elif rows:
-            st.warning('Esta HC tiene pendientes, pero ninguno coincide con un supervisor de día en la fecha seleccionada. Revisa los demás pendientes o cambia la fecha.')
-        else:
-            st.info('No hay participantes marcados como PENDIENTE para esta HC en el Excel cargado.')
-        with st.expander(f'Otros pendientes / por revisar ({len(rows)-len(candidates)})'):
-            other = [r for r in rows if r not in candidates]
-            if other:
-                st.dataframe(pd.DataFrame(other), hide_index=True, use_container_width=True)
+        count = st.selectbox('Cantidad de jornadas para esta HC', [1, 2, 3, 4], key=f'hc_jornadas_{course}')
+        for j in range(count):
+            st.markdown(f'**Jornada {j+1}**')
+            course_day = st.date_input('Fecha de esta jornada', value=selected_date + timedelta(days=j),
+                min_value=date(2026,1,1), max_value=date(2026,12,31), key=f'hc_day_{course}_{j}')
+            course_records = (records if (course_day.month,course_day.year)==(selected_date.month,selected_date.year)
+                else load_calendar(calendar_bytes,course_day.month,course_day.year)[0])
+            rows = cross_hc(course_records, technicians, course, course_day, mapping)
+            for r in rows:
+                all_rows.append({'Capacitación':label, 'Fecha':course_day.strftime('%d/%m/%Y'), **r})
+            candidates = [r for r in rows if r['Situación'].startswith('Candidato')]
+            unmatched = [r for r in rows if r['Situación']=='Sin correspondencia en calendario']
+            m1,m2,m3 = st.columns(3)
+            m1.metric('Pendientes',len(rows))
+            m2.metric('Candidatos por turno',len(candidates))
+            m3.metric('Sin correspondencia',len(unmatched))
+            if candidates:
+                st.dataframe(pd.DataFrame(candidates).drop(columns=['Fila HC']),hide_index=True,width='stretch')
+            elif rows:
+                st.warning('No hay candidatos cuyo supervisor esté de día en esta fecha.')
             else:
-                st.caption('No hay otros pendientes.')
-
-        st.markdown('**Horario y participantes de esta capacitación**')
-        left, right = st.columns(2)
-        start = left.time_input('Inicio', value=time(9 if i % 2 == 0 else 15, 0), key=f'hc_start_{course}')
-        end = right.time_input('Término', value=time(14 if i % 2 == 0 else 18, 0), key=f'hc_end_{course}')
-        if end <= start:
-            st.error('La hora de término debe ser posterior a la de inicio.')
-        options = {f"{r['Técnico / participante']} · {r['Supervisor HC']} · fila {r['Fila HC']}": r for r in candidates}
-        chosen = st.multiselect('Participantes propuestos', options=list(options), default=list(options), key=f'hc_people_{course}')
-        proposals.append({'name': label, 'date': course_day, 'start': start, 'end': end, 'people': [options[k] for k in chosen], 'valid': end > start})
+                st.info('No hay pendientes para esta HC.')
+            with st.expander(f'Otros pendientes / por revisar ({len(rows)-len(candidates)})'):
+                other=[r for r in rows if r not in candidates]
+                if other: st.dataframe(pd.DataFrame(other),hide_index=True,width='stretch')
+            left,right=st.columns(2)
+            start=left.time_input('Inicio',value=time(9 if j%2==0 else 15,0),key=f'hc_start_{course}_{j}')
+            end=right.time_input('Término',value=time(14 if j%2==0 else 18,0),key=f'hc_end_{course}_{j}')
+            if end<=start: st.error('La hora de término debe ser posterior a la de inicio.')
+            options={f"{r['Técnico / participante']} · {r['Supervisor HC']} · fila {r['Fila HC']}":r for r in candidates}
+            chosen=st.multiselect('Participantes propuestos',options=list(options),default=list(options),key=f'hc_people_{course}_{j}')
+            people=[options[k] for k in chosen]
+            self_supervised=[r for r in people if norm(r['Técnico / participante'])==norm(r['Supervisor HC'])]
+            if self_supervised:
+                st.warning('Revisar: '+', '.join(r['Técnico / participante'] for r in self_supervised)+
+                    ' figura como su propio supervisor en el registro HC. Se mantiene porque podría tratarse de un supervisor que también requiere capacitación; confirma la relación antes de enviar.')
+            proposals.append({'name':label,'date':course_day,'start':start,'end':end,'people':people,'valid':end>start})
 
 if len(proposals) > 1:
     for i, first in enumerate(proposals):
         for second in proposals[i+1:]:
             if first['date']==second['date'] and first['valid'] and second['valid'] and first['start'] < second['end'] and second['start'] < first['end']:
-                same = {r['Fila HC'] for r in first['people']} & {r['Fila HC'] for r in second['people']}
+                same = {norm(r['Técnico / participante']) for r in first['people']} & {norm(r['Técnico / participante']) for r in second['people']}
                 if same:
                     st.warning(f'Conflicto de horario: {len(same)} participante(s) están propuestos para «{first["name"]}» y «{second["name"]}» en horarios superpuestos.')
 
+st.divider()
+st.subheader('Listado listo para pegar en Excel')
+st.caption('Una fila por persona, curso y fecha. Copia el bloque con el icono superior derecho y pégalo directamente en Excel (Ctrl + V).')
+excel_rows=[]
+for p in proposals:
+    for r in p['people']:
+        excel_rows.append({'Fecha':p['date'].strftime('%d/%m/%Y'),
+            'Supervisor':r['Supervisor HC'], 'Técnico':r['Técnico / participante'], 'Curso':p['name']})
+excel_rows=list({(r['Fecha'],norm(r['Supervisor']),norm(r['Técnico']),norm(r['Curso'])):r for r in excel_rows}.values())
+excel_rows.sort(key=lambda r:(pd.to_datetime(r['Fecha'],dayfirst=True),norm(r['Supervisor']),norm(r['Curso']),norm(r['Técnico'])))
+if excel_rows:
+    st.dataframe(pd.DataFrame(excel_rows),hide_index=True,width='stretch')
+    tsv='\t'.join(['Fecha','Supervisor','Técnico','Curso'])+'\n'+'\n'.join('\t'.join(str(r[c]) for c in ['Fecha','Supervisor','Técnico','Curso']) for r in excel_rows)
+    st.code(tsv,language=None,wrap_lines=False)
+else:
+    st.info('Selecciona participantes para construir el listado.')
 st.download_button('Descargar cruce de todas las HC (CSV)', pd.DataFrame(all_rows).to_csv(index=False).encode('utf-8-sig'), file_name=f'cruce_hc_{selected_date:%Y%m%d}.csv', mime='text/csv')
 st.download_button('Exportar cruce completo (Excel)',excel_bytes({'Pendientes':all_rows}),file_name='cruce_hc.xlsx')
 st.download_button('Exportar cruce completo (PDF)',pdf_bytes('Planificación de herramientas críticas',{'Pendientes y situación':all_rows}),file_name='cruce_hc.pdf')
@@ -188,11 +204,11 @@ sections = []
 for p in proposals:
     grouped = defaultdict(list)
     for r in p['people']:
-        grouped[r['Supervisores de día'] or r['Supervisor HC']].append(r['Técnico / participante'])
+        grouped[r['Supervisor HC']].append(r['Técnico / participante'])
     listing = '\n'.join(f'  - {supervisor}: {", ".join(sorted(set(names)))}' for supervisor, names in sorted(grouped.items())) or '  - Sin participantes propuestos.'
     sections.append(f'{p["name"]}\nFecha: {p["date"]:%d/%m/%Y}\nHorario: {p["start"]:%H:%M} a {p["end"]:%H:%M}\nParticipantes propuestos por supervisor:\n{listing}')
 
-subject = f'Coordinación de {len(proposals)} capacitación(es) HC – {selected_date:%d/%m/%Y}'
+subject = f'Coordinación de {len(proposals)} jornada(s) HC – {min(p["date"] for p in proposals):%d/%m/%Y}'
 email = (f'Asunto: {subject}\n\nEstimados/as:\n\n'
          f'Estamos organizando las siguientes capacitaciones de herramientas críticas, en {location}.\n'
          + (f'Relator: {trainer}.\n' if trainer else '') + '\n'

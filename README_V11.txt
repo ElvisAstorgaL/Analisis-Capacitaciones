@@ -1,0 +1,1 @@
+V11: múltiples jornadas por HC (1 a 4), tabla TSV para pegar en Excel, revisión de auto-supervisión y detección de conflictos por nombre. Mantiene carga manual y módulos previos.\n
